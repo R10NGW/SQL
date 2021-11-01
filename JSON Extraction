@@ -1,0 +1,121 @@
+set @row_number = 1;
+select   
+  JSON_OBJECT
+    ( 
+      'POLICY_NUM',`POLICY NUM`
+      ,'SRC_COMPANY_CD',`SRC_COMPANY_CD`
+      ,'INSURED',Insured
+      ,'POLICY',Policy
+      ,'PLCY',PLCY
+      ,'TRAN_TS',`TRAN_TS`
+      ,'SRC_SEQ',`SRC_SEQ`
+      ,'LOB_INDS',`LOB_INDS`
+      ,'DIST_CHNL_CD',`DIST_CHNL_CD`
+    ) as 'policy_index'
+from
+  (
+    select 
+      `POLICY NUM`
+      ,`SRC_COMPANY_CD`
+      ,JSON_OBJECT
+        (
+          'NAMED_INSD_FN',`NAMED_INSD_FN`
+          ,'NAMED_INSD_LN',`NAMED_INSD_LN`
+          ,'NAME_TYPE',`NAME_TYPE`
+          ,'STREET_ADDR1',`STREET_ADDR1`
+          ,'STREET_ADDR2',`STREET_ADDR2`
+          ,'STREET_CITY',`STREET_CITY`
+          ,'STREET_STATE',`STREET_STATE`
+          ,'STREET_ZIP',`STREET_ZIP`
+          ,'COUNTRY_CD',`COUNTRY_CD`
+          ,'ADRESS_TYPE',`ADRESS_TYPE`
+          ,'PHONE_NUM',`PHONE_NUM`
+        ) as 'Insured'
+      ,JSON_OBJECT
+        (
+          'POLICY_PREFIX',`POLICY_PREFIX`
+          ,'POLICY_STATUS',`POLICY_STATUS`
+          ,'POLICY_SUFFIX',`POLICY_SUFFIX`
+        ) as 'Policy'
+      ,JSON_OBJECT
+        (
+          'PLCY_EFF_DATE',`PLCY_EFF_DATE`
+          ,'PLCY_EXP_DATE',`PLCY_EXP_DATE`
+        ) as 'PLCY'
+      ,`TRAN_TS`
+      ,`SRC_SEQ`
+      ,`LOB_INDS`
+      ,`DIST_CHNL_CD`
+    from   
+      (
+        select 
+          *
+          ,(case when relationship_to_pni in ('true', 'self') then 'NM1'
+            else concat('NM',(@row_number:=case when @row_number+1 <= driverCount then @row_number+1 else 2 end))
+            end) as `NAME_TYPE`  --  If Person Name - NM1, NM2 , If Business Name then BN1, BN2
+        from
+          (
+            select distinct
+              p.policy_id as `POLICY NUM`
+              ,'Q' as `SRC_COMPANY_CD`
+              ,d.driver_id
+              ,case when true then first_name end as `NAMED_INSD_FN`
+              ,case when true then last_name end  AS `NAMED_INSD_LN`
+              ,null as `business_name`
+              ,address AS `STREET_ADDR1`
+              ,address_2 AS `STREET_ADDR2`
+              ,city AS `STREET_CITY`
+              ,state AS `STREET_STATE`
+              ,concat(zip,'') AS `STREET_ZIP`
+              ,'USA' AS `COUNTRY_CD`
+              ,'PA' AS `ADRESS_TYPE` -- ADDRESS_TYPE: PA - Primary Address; BA - Business Address; MA - Mailing Address; LA - Legal Address
+      -- 				,concat(cell_phone,'') AS `PHONE_NUM`
+              ,'MOT' as `POLICY_PREFIX`
+              ,case when active = 'Cancelled' then 'C' else 'A' end AS `POLICY_STATUS`  -- Single byte code ( A - Active, C- Cancelled )
+              ,substring(p.policy_id, 8, 10) AS `POLICY_SUFFIX`
+              ,date_format(convert_tz(p.date_effective, 'US/Mountain', 'UTC'), '%Y-%m-%dT%TZ') AS `PLCY_EFF_DATE`
+              ,date_format(convert_tz(p.date_expire, 'US/Mountain', 'UTC'), '%Y-%m-%dT%TZ') AS `PLCY_EXP_DATE`
+              ,date_format(convert_tz(p.date_created, 'US/Mountain', 'UTC'), '%Y-%m-%dT%TZ') AS `TRAN_TS` -- tranaction timestamp
+              ,'001' AS `SRC_SEQ` -- record of PNI required
+              ,'A' as `LOB_INDS`
+              ,'99' AS `DIST_CHNL_CD` -- MA to send 99
+              ,concat('+1 ', '(',substr( REPLACE(REPLACE(REPLACE(REPLACE(coalesce(nullif(cell_phone, '')
+              , nullif(home_phone, '')), '-', ''), ')', ''), '(', '')
+              , '  ', ''),1,3),') ',substr( REPLACE(REPLACE(REPLACE(REPLACE(coalesce(nullif(cell_phone, ''), nullif(home_phone, ''))
+              , '-', ''), ')', ''), '(', '')
+              , ' ', ''),4,3),'-',substr( REPLACE(REPLACE(REPLACE(REPLACE(coalesce(nullif(cell_phone, ''), nullif(home_phone, ''))
+              , '-', ''), ')', ''), '(', ''), ' ', ''),7)) AS `PHONE_NUM` 
+              ,driverCount
+              ,relationship_to_pni
+          from 
+            Policy_2 p
+            join Link_Table l on l.policy_id = p.policy_id and l.current_flag = 'y'
+            join drivers_rc3 d on l.driver_id = d.driver_id  
+            left join 
+              (    
+                select 
+                policy_id
+                ,count(policy_id) as driverCount
+                from 
+                  (
+                    select distinct
+                      p.policy_id 
+                      ,d.driver_id
+                    from 
+                      Policy_2 p
+                      join Link_Table l on l.policy_id = p.policy_id and l.current_flag = 'y' and p.test_flag = 'N' and p.active <> 'quote'
+                      join drivers_rc3 d on l.driver_id = d.driver_id  
+                  ) as d
+                group by
+                  policy_id
+               ) as drivercountSS on drivercountSS.policy_id = p.policy_id
+          where
+            p.current_flag = 'Y' 
+            and p.test_flag = 'N' 
+            and p.active <> 'quote'   
+            and p.date_effective > 1 
+            and substring(p.policy_id, 5, 2) = 'tn'
+            and [least(p.date_created, p.date_entered, p.date_effective)=daterange]
+        ) as root
+      )  as driverCountAdded
+  ) as JsonsAdded
