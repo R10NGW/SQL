@@ -1,0 +1,19 @@
+select
+ date
+ ,partner
+ ,round(@running_total:=@running_total + premium,2) AS cumulative_sum
+from
+ (
+   select c.calendar_id as date, sum(pnc.`premium`) as premium, case when p2.channel_field like '%zeb%' then 'zebra' else p2.channel_field end as partner
+   from
+     [policy_net_collected as pnc]
+    join Policy_2 p2 on p2.policy_id = pnc.`policy #` and p2.term_sequence = 1 and p2.endorse_seq = 0 and p2.test_flag = 'n'and p2.channel_field like '%zeb%'
+    join (select @running_total:=0) as running
+    right join (select  calendar_id from calendar) as c on c.calendar_id = pnc.`trans eff date`
+   where
+     pnc.`EFF DATE` >= '2021-01-01'
+   group by
+     date
+     ,partner 
+   )as p
+
